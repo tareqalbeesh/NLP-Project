@@ -1,0 +1,182 @@
+{
+  "name": "Forensic Linguist Baseline (no LLM)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Authorship Verification (Baseline, no LLM)",
+        "formDescription": "Upload two text files. The pipeline runs stylometric comparison directly via FastAPI — no agent, no reasoning, just numbers.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Text A",
+              "fieldType": "file",
+              "fieldName": "fileA",
+              "multipleFiles": false,
+              "acceptFileTypes": ".txt",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Text B",
+              "fieldType": "file",
+              "fieldName": "fileB",
+              "multipleFiles": false,
+              "acceptFileTypes": ".txt",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [-400, 0],
+      "webhookId": "baseline-form-aaaaaa"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "fileA",
+        "destinationKey": "text_a",
+        "options": { "keepSource": "json" }
+      },
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Extract Text A",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-200, -80]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "fileB",
+        "destinationKey": "text_b",
+        "options": { "keepSource": "json" }
+      },
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Extract Text B",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-200, 80]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nltk-tools:8000/compare_two_texts",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text_a\": {{ JSON.stringify($json.text_a) }},\n  \"text_b\": {{ JSON.stringify($json.text_b) }}\n}",
+        "options": {}
+      },
+      "id": "55555555-5555-4555-8555-555555555555",
+      "name": "Compare via FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "v1",
+              "name": "verdict",
+              "value": "={{ $json.verdict }}",
+              "type": "string"
+            },
+            {
+              "id": "v2",
+              "name": "confidence",
+              "value": "={{ $json.confidence }}",
+              "type": "string"
+            },
+            {
+              "id": "v3",
+              "name": "overall_similarity",
+              "value": "={{ $json.overall_similarity }}",
+              "type": "number"
+            },
+            {
+              "id": "v4",
+              "name": "per_feature",
+              "value": "={{ $json.per_feature }}",
+              "type": "object"
+            },
+            {
+              "id": "v5",
+              "name": "richness_a",
+              "value": "={{ $json.richness_a }}",
+              "type": "object"
+            },
+            {
+              "id": "v6",
+              "name": "richness_b",
+              "value": "={{ $json.richness_b }}",
+              "type": "object"
+            },
+            {
+              "id": "v7",
+              "name": "shared_top_char_ngrams",
+              "value": "={{ $json.shared_top_char_ngrams }}",
+              "type": "array"
+            },
+            {
+              "id": "v8",
+              "name": "pipeline",
+              "value": "baseline_no_llm",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "66666666-6666-4666-8666-666666666666",
+      "name": "Baseline Verdict",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [400, 0]
+    }
+  ],
+  "connections": {
+    "Form Trigger": {
+      "main": [
+        [
+          { "node": "Extract Text A", "type": "main", "index": 0 },
+          { "node": "Extract Text B", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract Text A": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 0 }]]
+    },
+    "Extract Text B": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 1 }]]
+    },
+    "Merge": {
+      "main": [[{ "node": "Compare via FastAPI", "type": "main", "index": 0 }]]
+    },
+    "Compare via FastAPI": {
+      "main": [[{ "node": "Baseline Verdict", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "versionId": "ba5e1ine-0000-4000-8000-000000000000",
+  "meta": { "templateCredsSetupCompleted": true },
+  "id": "REPLACE_WITH_GENERATED_ID",
+  "tags": []
+}

@@ -154,3 +154,13 @@ services:
     image: ollama/ollama:rocm
     depends_on:
      - ollama-gpu-amd
+  nltk-tools:
+      build: ./nltk-tools
+      hostname: nltk-tools
+      container_name: nltk-tools
+      networks: ['demo']
+      restart: unless-stopped
+      ports:
+        - 8000:8000
+      depends_on:
+        - qdrant

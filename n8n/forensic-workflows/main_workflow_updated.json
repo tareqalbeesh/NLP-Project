@@ -1,0 +1,220 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=File content:\n{{ $json.fileContent }}\n\nInstructions: {{ $json.instructions }}",
+        "options": {
+          "systemMessage": "You are a forensic linguist coordinator. Given a document and a user request, you analyze authorship STYLE (idiolect) — not content. You have access to stylometric analysis tools. ALWAYS call relevant tools before answering — never guess from reading the text alone. For each claim, cite the specific tool output as evidence. Be precise about uncertainty: report which features are diagnostic and which are inconclusive. Output a structured analysis with: (1) tools called, (2) per-feature findings, (3) overall stylistic profile, (4) confidence."
+        }
+      },
+      "id": "53c5d683-69c8-4313-882c-8ab12010bfc1",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [0, -96]
+    },
+    {
+      "parameters": {
+        "formTitle": "AI Text Processor",
+        "formDescription": "Upload a text file and provide instructions for the AI",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Upload Text File",
+              "fieldType": "file",
+              "fieldName": "textFile",
+              "multipleFiles": false,
+              "acceptFileTypes": ".txt",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Instructions for AI",
+              "fieldType": "textarea",
+              "fieldName": "instructions",
+              "placeholder": "What should the AI do with this file?",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Processing your file... Check the workflow output for results."
+            }
+          }
+        }
+      },
+      "id": "7aca9c47-6130-4c69-89a1-214138baa3cf",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [-384, -96],
+      "webhookId": "404dfc52-bb3f-4ff9-87be-6e21306fb104"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "textFile",
+        "destinationKey": "fileContent",
+        "options": {
+          "keepSource": "json"
+        }
+      },
+      "id": "81448673-86ba-4631-b23e-c0aaa667e4cc",
+      "name": "Extract Text from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-192, -96]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "analysis",
+              "value": "={{ $json.output }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1edeac0e-ad3d-4bb0-a17d-96c8feafd403",
+      "name": "Show Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [336, -96]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "llama3-8b",
+          "mode": "list",
+          "cachedResultName": "llama3-8b"
+        },
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "id": "7138e5ba-e74b-4685-8812-1b84a2f14795",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [0, 112],
+      "credentials": {
+        "openAiApi": {
+          "id": "R2pa0ffp0wVil97x",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "char_ngrams",
+        "description": "Use this tool to compute character n-gram frequency distributions from a document for stylometric / authorship analysis. Call it whenever you need character-level idiolect evidence (e.g., diagnostic suffixes, punctuation-adjacent patterns, sub-word habits). Provide the full document text and the n-gram size (commonly 3, 4, or 5; default 4). Returns a frequency table you must cite as evidence for any character-level claim.",
+        "workflowId": {
+          "__rl": true,
+          "value": "upNATknIH3XbsDwj",
+          "mode": "list",
+          "cachedResultName": "tool_char_ngrams"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ $fromAI('text', 'The full document text to analyze for character n-gram frequencies.', 'string') }}",
+            "n": "={{ $fromAI('n', 'The character n-gram size (e.g. 3, 4, or 5). Default 4.', 'number', 4) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "n",
+              "displayName": "n",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "b1e7c2a9-4d8f-4a2b-9c3e-1f0a6d5e7b22",
+      "name": "char_ngrams",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.1,
+      "position": [180, 112]
+    }
+  ],
+  "connections": {
+    "Extract Text from File": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Text from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Show Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "char_ngrams": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

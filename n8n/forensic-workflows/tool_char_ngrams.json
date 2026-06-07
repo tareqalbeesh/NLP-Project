@@ -1,0 +1,79 @@
+{
+  "name": "tool_char_ngrams",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "jsonExample",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "n",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "a1f3c7d2-9b4e-4f6a-8c1d-2e5b7f8a9c01",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nltk-tools:8000/char_ngrams",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "n",
+              "value": "={{ $json.n }}"
+            },
+            {
+              "name": "top_k",
+              "value": "50"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.text) }}\n}",
+        "options": {}
+      },
+      "id": "b2e4d8f3-7c5a-4d9b-9e2f-3a6c8d0b1e02",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c3d5e9f4-8a6b-4e0c-a1f3-4b7d9e1c2f03",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "REPLACE_WITH_GENERATED_ID",
+  "tags": []
+}

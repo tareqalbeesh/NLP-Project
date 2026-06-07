@@ -1,0 +1,180 @@
+{
+  "name": "Forensic Attribution (deterministic protocol)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Authorship Attribution",
+        "formDescription": "Upload an unknown document. The pipeline deterministically: (1) extracts its stylometric features, (2) fetches features for every indexed corpus sample, (3) feeds both to the LLM, which compares feature-by-feature and decides the most likely author.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Unknown Document",
+              "fieldType": "file",
+              "fieldName": "textFile",
+              "multipleFiles": false,
+              "acceptFileTypes": ".txt",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f0000001-0001-4001-8001-000000000001",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [-720, 0],
+      "webhookId": "attribute-deterministic-form"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "textFile",
+        "destinationKey": "fileContent",
+        "options": { "keepSource": "json" }
+      },
+      "id": "f0000002-0002-4002-8002-000000000002",
+      "name": "Extract Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-520, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nltk-tools:8000/extract_all_features",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.fileContent) }}\n}",
+        "options": {}
+      },
+      "id": "f0000003-0003-4003-8003-000000000003",
+      "name": "Unknown Features",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-320, -80]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://nltk-tools:8000/extract_corpus_features",
+        "options": {}
+      },
+      "id": "f0000004-0004-4004-8004-000000000004",
+      "name": "Corpus Features",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-320, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine pre-computed unknown features + corpus features into one payload.\nconst unknown = $('Unknown Features').first().json;\nconst corpus = $('Corpus Features').first().json;\n\n// Compact corpus: keep features per sample but trim long arrays so the\n// prompt stays manageable. We keep the most useful scalars + a handful of\n// the most-frequent function words and POS bigrams for comparison.\nfunction topN(dict, n) {\n  if (!dict || typeof dict !== 'object') return {};\n  const entries = Object.entries(dict)\n    .filter(([, v]) => typeof v === 'number' && v > 0)\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, n);\n  return Object.fromEntries(entries);\n}\n\nfunction compact(features) {\n  if (!features) return {};\n  return {\n    vocab_richness: features.vocab_richness,\n    top_function_words: topN(features.function_word_freqs?.rates_per_1000, 15),\n    top_pos_bigrams: topN(features.pos_distribution?.bigrams, 12),\n    pos_unigrams: features.pos_distribution?.unigrams,\n    punctuation: features.punctuation_profile?.rates_per_1000,\n    sentence_stats: {\n      n_sents: features.sentence_length_stats?.n_sents,\n      mean: features.sentence_length_stats?.mean,\n      median: features.sentence_length_stats?.median,\n      stdev: features.sentence_length_stats?.stdev,\n    },\n  };\n}\n\nreturn [{\n  json: {\n    unknown: compact(unknown),\n    corpus: (corpus.authors || []).map(a => ({\n      author: a.author,\n      n_samples: a.samples.length,\n      samples: a.samples.map(s => ({\n        sample_id: s.sample_id,\n        n_tokens: s.n_tokens,\n        features: compact(s.features),\n      })),\n    })),\n  },\n}];"
+      },
+      "id": "f0000005-0005-4005-8005-000000000005",
+      "name": "Assemble Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-100, 0]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You will determine which author from the indexed corpus most likely wrote the UNKNOWN document. The features below were already computed by deterministic stylometric tools — you do NOT call any tools. Your job is to reason over these numbers.\n\nUNKNOWN DOCUMENT FEATURES:\n{{ JSON.stringify($json.unknown, null, 2) }}\n\nCORPUS (known authors and their indexed samples, each with the same set of features):\n{{ JSON.stringify($json.corpus, null, 2) }}\n\nTASK\nCompare the UNKNOWN's features against each candidate sample feature-by-feature. For each feature, state which candidate the unknown is numerically closest to and the magnitude of the gap.\n\nUse at least these features in your comparison:\n- vocab_richness (TTR, MATTR, Yule_K, Honore_R, hapax_ratio)\n- top_function_words rates per 1000\n- pos_unigrams percentages\n- top_pos_bigrams percentages\n- punctuation rates per 1000\n- sentence_stats (mean, median, stdev sentence length)\n\nOUTPUT (markdown):\n\n## Feature-by-feature comparison\n| Feature | Unknown | Candidate A | Candidate B | Closer to |\n(fill the table; one row per feature group)\n\n## Verdict\nPredicted author: <name>\nConfidence: <high | medium | low>\nKey evidence: <bullet list of features that drove the decision>\nDissenting evidence: <bullet list of features that point the other way>\n\nRules:\n- Use ONLY numbers from the JSON above. Do NOT guess from textual style or content.\n- If two candidates are roughly equidistant on most features, the verdict is 'inconclusive'.\n- Never claim a feature value not present in the JSON.",
+        "options": {
+          "systemMessage": "You are a forensic stylometric reasoner. You receive pre-computed features for an unknown document and for each candidate author's reference samples. You compare them numerically and decide attribution. You do not call tools. You do not invent numbers. Cite values verbatim from the JSON."
+        }
+      },
+      "id": "f0000006-0006-4006-8006-000000000006",
+      "name": "Attribute (LLM reasoning)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [120, 0]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "qwen3-30b-a3b",
+          "mode": "list",
+          "cachedResultName": "qwen3-30b-a3b"
+        },
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "f0000007-0007-4007-8007-000000000007",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [120, 200],
+      "credentials": {
+        "openAiApi": {
+          "id": "R2pa0ffp0wVil97x",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "verdict",
+              "value": "={{ $json.text || $json.output }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "pipeline",
+              "value": "deterministic_attribution",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "run_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f0000008-0008-4008-8008-000000000008",
+      "name": "Show Verdict",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [340, 0]
+    }
+  ],
+  "connections": {
+    "Form Trigger": {
+      "main": [[{ "node": "Extract Text", "type": "main", "index": 0 }]]
+    },
+    "Extract Text": {
+      "main": [[{ "node": "Unknown Features", "type": "main", "index": 0 }]]
+    },
+    "Unknown Features": {
+      "main": [[{ "node": "Corpus Features", "type": "main", "index": 0 }]]
+    },
+    "Corpus Features": {
+      "main": [[{ "node": "Assemble Payload", "type": "main", "index": 0 }]]
+    },
+    "Assemble Payload": {
+      "main": [[{ "node": "Attribute (LLM reasoning)", "type": "main", "index": 0 }]]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [[{ "node": "Attribute (LLM reasoning)", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Attribute (LLM reasoning)": {
+      "main": [[{ "node": "Show Verdict", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "versionId": "deterministic-attribution-v1",
+  "meta": { "templateCredsSetupCompleted": true },
+  "id": "REPLACE_WITH_GENERATED_ID",
+  "tags": []
+}

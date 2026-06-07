@@ -1,0 +1,355 @@
+{
+  "name": "Forensic Linguist (Code Tools)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Forensic Linguist",
+        "formDescription": "Upload a text file and ask the agent to analyze its style",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Upload Text File",
+              "fieldType": "file",
+              "fieldName": "textFile",
+              "multipleFiles": false,
+              "acceptFileTypes": ".txt",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Instructions for AI",
+              "fieldType": "textarea",
+              "fieldName": "instructions",
+              "placeholder": "e.g. compute the char 4-gram distribution and report the 10 most distinctive ones",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Processing your file..."
+            }
+          }
+        }
+      },
+      "id": "7aca9c47-6130-4c69-89a1-214138baa3cf",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [-384, -96],
+      "webhookId": "404dfc52-bb3f-4ff9-87be-6e21306fb104"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "textFile",
+        "destinationKey": "fileContent",
+        "options": {
+          "keepSource": "json"
+        }
+      },
+      "id": "81448673-86ba-4631-b23e-c0aaa667e4cc",
+      "name": "Extract Text from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-192, -96]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=File content:\n{{ $json.fileContent }}\n\nInstructions: {{ $json.instructions }}",
+        "options": {
+          "systemMessage": "You are a forensic linguist coordinator. You have function-calling tools that compute REAL stylometric features. Always emit a real tool_call — never describe a tool call in prose. Cite actual numeric values from tool results verbatim. Never invent tool names or results. Pass the FULL document text to each tool; do not summarize or truncate.\n\n=== AUTHORSHIP ATTRIBUTION PROTOCOL ===\nWhen the user asks WHO wrote a document (attribution), follow this MANDATORY multi-step procedure. Do NOT shortcut. The user explicitly wants to see your reasoning:\n\n1. Call `list_known_authors` to see candidate authors in the corpus.\n2. Call `list_samples` (optionally per author) to get sample_ids of known texts.\n3. Run feature tools on the UNKNOWN document: `vocab_richness`, `function_word_freqs`, `pos_distribution`, `punctuation_profile` — record the numbers.\n4. For each candidate author, call `get_sample_text(sample_id)` to retrieve the reference text, then run the SAME feature tools on it. Record their numbers too.\n5. (Optional) Use `compare_two_texts` between the unknown and each candidate sample for a similarity score — but treat it as ONE piece of evidence, not the verdict.\n6. Compare numbers side-by-side feature by feature. State which features point to which candidate.\n7. Conclude with: predicted_author, confidence (high/medium/low), per-feature evidence, dissenting signals.\n\nWhen the user asks for stylistic analysis of a SINGLE document (no attribution), just run the feature tools and synthesize — no need to query the corpus.\n\nOutput format (markdown):\n## Steps Taken\n<numbered list of tool calls with their key numeric results>\n## Per-Feature Comparison\n<table of feature | unknown | author_A | author_B with deltas>\n## Verdict\n<predicted author, confidence, and which features were decisive>\n## Caveats\n<limitations, e.g. sample size, period overlap, low margin>"
+        }
+      },
+      "id": "53c5d683-69c8-4313-882c-8ab12010bfc1",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [0, -96]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "analysis",
+              "value": "={{ $json.output }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "run_id",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1edeac0e-ad3d-4bb0-a17d-96c8feafd403",
+      "name": "Show Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [336, -96]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "qwen3-30b-a3b",
+          "mode": "list",
+          "cachedResultName": "qwen3-30b-a3b"
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "7138e5ba-e74b-4685-8812-1b84a2f14795",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [-180, 112],
+      "credentials": {
+        "openAiApi": {
+          "id": "R2pa0ffp0wVil97x",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $execution.id }}",
+        "contextWindowLength": 10
+      },
+      "id": "a4b6c8d0-2e4f-6a8c-9b1d-3e5f7c9b0d11",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [-60, 112]
+    },
+    {
+      "parameters": {
+        "name": "char_ngrams",
+        "description": "Compute the most frequent character n-grams (sub-word sequences) in a document. Use this to characterize an author's character-level idiolect — punctuation-adjacent patterns, diagnostic suffixes, common sub-word habits. Pass the FULL document text (not a summary).",
+        "language": "javaScript",
+        "jsCode": "const n = query.n ?? 4;\nconst text = query.text ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/char_ngrams',\n    qs: { n, top_k: 50 },\n    body: { text },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"The full document text to analyze.\" },\n    \"n\": { \"type\": \"number\", \"description\": \"The character n-gram size (3, 4, or 5). Default 4.\" }\n  },\n  \"required\": [\"text\"]\n}"
+      },
+      "id": "b1e7c2a9-4d8f-4a2b-9c3e-1f0a6d5e7b22",
+      "name": "char_ngrams",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [80, 112]
+    },
+    {
+      "parameters": {
+        "name": "vocab_richness",
+        "description": "Compute vocabulary-richness metrics: TTR, MATTR (sliding window), Yule's K, Honoré's R, and hapax ratio. Use this to characterize lexical diversity — high TTR/MATTR means varied vocabulary, low Yule's K means more diverse word usage. Pass the FULL document text.",
+        "language": "javaScript",
+        "jsCode": "const text = query.text ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/vocab_richness',\n    body: { text },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"The full document text to analyze.\" }\n  },\n  \"required\": [\"text\"]\n}"
+      },
+      "id": "c2f8d3ba-5e9f-4b3c-ad4e-2f1b7c6e8c33",
+      "name": "vocab_richness",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [260, 112]
+    },
+    {
+      "parameters": {
+        "name": "function_word_freqs",
+        "description": "Compute per-1000-token rates of English function words (closed-class: the, of, and, but, however, ...). Function-word frequencies are topic-independent and author-dependent — the gold-standard authorship feature (Burrows' Delta). Pass the FULL document text.",
+        "language": "javaScript",
+        "jsCode": "const text = query.text ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/function_word_freqs',\n    body: { text },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"The full document text to analyze.\" }\n  },\n  \"required\": [\"text\"]\n}"
+      },
+      "id": "d3a9e4cb-6fa0-4c4d-be5f-3a2c8d7f9d44",
+      "name": "function_word_freqs",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [440, 112]
+    },
+    {
+      "parameters": {
+        "name": "pos_distribution",
+        "description": "Compute POS-tag distribution: unigram and bigram frequencies of part-of-speech tags (DET, NOUN, VERB, ADV, etc.). Use this to characterize an author's syntactic habits — e.g., how often they use adverbs, prefer DET-NOUN vs ADJ-NOUN constructions. Pass the FULL document text.",
+        "language": "javaScript",
+        "jsCode": "const text = query.text ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/pos_distribution',\n    body: { text },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"The full document text to analyze.\" }\n  },\n  \"required\": [\"text\"]\n}"
+      },
+      "id": "e4b0f5dc-7ab1-4d4e-cf60-4b3d9e8f0e55",
+      "name": "pos_distribution",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [620, 112]
+    },
+    {
+      "parameters": {
+        "name": "sentence_length_stats",
+        "description": "Compute sentence-length statistics: mean, median, stdev, min, max, and a length histogram (in tokens). Use this to characterize sentence-construction style — short punchy sentences vs long flowing ones. Pass the FULL document text.",
+        "language": "javaScript",
+        "jsCode": "const text = query.text ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/sentence_length_stats',\n    body: { text },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"The full document text to analyze.\" }\n  },\n  \"required\": [\"text\"]\n}"
+      },
+      "id": "f5c1a6ed-8bc2-4e5f-d071-5c4e0f9a0f66",
+      "name": "sentence_length_stats",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [800, 112]
+    },
+    {
+      "parameters": {
+        "name": "punctuation_profile",
+        "description": "Compute per-1000-token rates of punctuation marks (, ; : -- ! ? \" ' ( ) ...). Use this to characterize an author's punctuation habits — semicolon use, em-dashes, exclamations, quotation style. Highly idiolectal. Pass the FULL document text.",
+        "language": "javaScript",
+        "jsCode": "const text = query.text ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/punctuation_profile',\n    body: { text },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": { \"type\": \"string\", \"description\": \"The full document text to analyze.\" }\n  },\n  \"required\": [\"text\"]\n}"
+      },
+      "id": "06d2b7fe-9cd3-4f60-e182-6d5f1a0b1077",
+      "name": "punctuation_profile",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [980, 112]
+    },
+    {
+      "parameters": {
+        "name": "compare_two_texts",
+        "description": "AUTHORSHIP VERIFICATION TOOL. Compares two texts and returns per-feature divergence (character n-gram cosine, function word cosine, POS bigram Jensen-Shannon, vocabulary diffs) plus an overall_similarity score, a verdict (likely_same_author / inconclusive / likely_different_authors), and a confidence rating. Use this whenever the user asks whether two passages share an author, or to compare stylistic similarity. Pass the FULL text of both samples.",
+        "language": "javaScript",
+        "jsCode": "const text_a = query.text_a ?? '';\nconst text_b = query.text_b ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://nltk-tools:8000/compare_two_texts',\n    body: { text_a, text_b },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text_a\": { \"type\": \"string\", \"description\": \"The first text sample.\" },\n    \"text_b\": { \"type\": \"string\", \"description\": \"The second text sample to compare against text_a.\" }\n  },\n  \"required\": [\"text_a\", \"text_b\"]\n}"
+      },
+      "id": "17e3c80a-ade4-4071-f293-7e602b1c2188",
+      "name": "compare_two_texts",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [1160, 112]
+    },
+    {
+      "parameters": {
+        "name": "list_known_authors",
+        "description": "Returns the list of authors currently in the reference corpus, with how many sample texts each one has. Call this FIRST when doing authorship analysis to see what your candidate space is.",
+        "language": "javaScript",
+        "jsCode": "try {\n  const data = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://nltk-tools:8000/list_authors',\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": false
+      },
+      "id": "39b5e02c-cfa6-4293-1405-9a835d3e43aa",
+      "name": "list_known_authors",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [1340, 112]
+    },
+    {
+      "parameters": {
+        "name": "list_samples",
+        "description": "Returns the indexed sample IDs in the reference corpus, optionally filtered by author. Each entry has sample_id, author, n_tokens, and a text_preview. Use this to find sample_ids you can then fetch in full via get_sample_text and analyze with feature tools.",
+        "language": "javaScript",
+        "jsCode": "const author = query.author ?? '';\nconst qs = author ? ('?author=' + encodeURIComponent(author)) : '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://nltk-tools:8000/list_samples' + qs,\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"author\": { \"type\": \"string\", \"description\": \"Optional. Filter to only this author's samples. Omit to list all samples in the corpus.\" }\n  }\n}"
+      },
+      "id": "40c6f13d-d0b7-43a4-2516-ab846e4f54bb",
+      "name": "list_samples",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [1520, 112]
+    },
+    {
+      "parameters": {
+        "name": "get_sample_text",
+        "description": "Fetches the FULL text of a known-author sample by its sample_id. Use this whenever you need a reference author's actual text so you can run feature tools (vocab_richness, char_ngrams, function_word_freqs, pos_distribution, sentence_length_stats, punctuation_profile, compare_two_texts) against it for comparison with an unknown document.",
+        "language": "javaScript",
+        "jsCode": "const sample_id = query.sample_id ?? '';\ntry {\n  const data = await this.helpers.httpRequest({\n    method: 'GET',\n    url: 'http://nltk-tools:8000/get_sample_text',\n    qs: { sample_id },\n    json: true,\n  });\n  return JSON.stringify(data);\n} catch (e) {\n  return `Tool error: ${e.message}`;\n}",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"sample_id\": { \"type\": \"string\", \"description\": \"The sample_id returned by list_samples.\" }\n  },\n  \"required\": [\"sample_id\"]\n}"
+      },
+      "id": "51d7a24e-e1c8-44b5-3627-bc957f5065cc",
+      "name": "get_sample_text",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.2,
+      "position": [1700, 112]
+    }
+  ],
+  "connections": {
+    "Form Trigger": {
+      "main": [[{ "node": "Extract Text from File", "type": "main", "index": 0 }]]
+    },
+    "Extract Text from File": {
+      "main": [[{ "node": "AI Agent", "type": "main", "index": 0 }]]
+    },
+    "AI Agent": {
+      "main": [[{ "node": "Show Output", "type": "main", "index": 0 }]]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [[{ "node": "AI Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Simple Memory": {
+      "ai_memory": [[{ "node": "AI Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "char_ngrams": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "vocab_richness": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "function_word_freqs": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "pos_distribution": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "sentence_length_stats": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "punctuation_profile": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "compare_two_texts": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "list_known_authors": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "list_samples": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "get_sample_text": {
+      "ai_tool": [[{ "node": "AI Agent", "type": "ai_tool", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "versionId": "e5b1f6dc-8c12-4e6f-c071-5c4e0fae0e66",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "REPLACE_WITH_GENERATED_ID",
+  "tags": []
+}

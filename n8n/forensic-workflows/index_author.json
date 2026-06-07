@@ -1,0 +1,148 @@
+{
+  "name": "Index Author Sample (corpus builder)",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Index a Known-Author Sample",
+        "formDescription": "Upload a text file written by a KNOWN author. Its stylometric fingerprint will be stored in Qdrant. Use the attribution workflow afterwards to match unknown documents against your indexed corpus.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Author Name",
+              "fieldType": "text",
+              "fieldName": "author",
+              "placeholder": "e.g. austen, fitzgerald, hemingway",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Sample Text File",
+              "fieldType": "file",
+              "fieldName": "textFile",
+              "multipleFiles": false,
+              "acceptFileTypes": ".txt",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ab111111-1111-4111-8111-aaaaaaaaaaaa",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [-400, 0],
+      "webhookId": "index-author-form-aaaaaa"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "textFile",
+        "destinationKey": "fileContent",
+        "options": { "keepSource": "json" }
+      },
+      "id": "ab222222-2222-4222-8222-aaaaaaaaaaaa",
+      "name": "Extract Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://nltk-tools:8000/index_author",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"author\": {{ JSON.stringify($json.author) }},\n  \"text\": {{ JSON.stringify($json.fileContent) }}\n}",
+        "options": {}
+      },
+      "id": "ab333333-3333-4333-8333-aaaaaaaaaaaa",
+      "name": "Index in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://nltk-tools:8000/list_authors",
+        "options": {}
+      },
+      "id": "ab444444-4444-4444-8444-aaaaaaaaaaaa",
+      "name": "Corpus Snapshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [200, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "status",
+              "value": "indexed",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "author",
+              "value": "={{ $('Index in Qdrant').item.json.author }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "sample_id",
+              "value": "={{ $('Index in Qdrant').item.json.sample_id }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "fingerprint_dim",
+              "value": "={{ $('Index in Qdrant').item.json.dim }}",
+              "type": "number"
+            },
+            {
+              "id": "5",
+              "name": "corpus_total_samples",
+              "value": "={{ $json.n_total_samples }}",
+              "type": "number"
+            },
+            {
+              "id": "6",
+              "name": "corpus_authors",
+              "value": "={{ $json.authors }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ab555555-5555-4555-8555-aaaaaaaaaaaa",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [400, 0]
+    }
+  ],
+  "connections": {
+    "Form Trigger": {
+      "main": [[{ "node": "Extract Text", "type": "main", "index": 0 }]]
+    },
+    "Extract Text": {
+      "main": [[{ "node": "Index in Qdrant", "type": "main", "index": 0 }]]
+    },
+    "Index in Qdrant": {
+      "main": [[{ "node": "Corpus Snapshot", "type": "main", "index": 0 }]]
+    },
+    "Corpus Snapshot": {
+      "main": [[{ "node": "Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "versionId": "1dx40000-4000-4000-8000-000000000000",
+  "meta": { "templateCredsSetupCompleted": true },
+  "id": "REPLACE_WITH_GENERATED_ID",
+  "tags": []
+}
