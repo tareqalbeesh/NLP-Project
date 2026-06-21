@@ -78,58 +78,6 @@ The model `llama3-8b` does **not** support tools and won't work for the agentic 
 
 ---
 
-## Repository layout
-
-```
-.
-├── docker-compose.yml                  # the whole stack
-├── .env.example                        # copy to .env
-│
-├── nltk-tools/                         # FastAPI sidecar
-│   ├── app.py                          # ~600 lines, all endpoints
-│   ├── Dockerfile
-│   └── requirements.txt
-│
-├── n8n/forensic-workflows/             # importable n8n workflows
-│   ├── forensic_linguist_agent.json    # ★ PRIMARY — chat-based, 6 inline tools, Ollama + Redis memory
-│   ├── main_workflow_code_tools.json   # alternative agentic workflow (form-based, 10 HTTP tools)
-│   ├── attribute_deterministic.json    # authorship attribution (deterministic protocol)
-│   ├── baseline_no_llm.json            # verification, no LLM
-│   ├── index_author.json               # corpus builder
-│   ├── main_workflow_updated.json      # variant using sub-workflows-as-tools
-│   └── tool_char_ngrams.json           # example sub-workflow for the variant
-│
-├── shared/                             # mounted into n8n as /data/shared
-│   ├── sample_austen.txt               # Pride and Prejudice opening
-│   └── sample_fitzgerald.txt           # The Great Gatsby opening
-│
-├── data-loading/                       # populate Redis from public corpora
-│   ├── data-loading.py                 #   chunk NLTK Gutenberg texts into Redis
-│   ├── data-loading2.py                #   variant ingestion pipeline
-│   └── reading-authors.py              #   enumerate unique authors in Redis
-│
-├── functions/                          # standalone Python reference implementation
-│   ├── ttr.py, rttr.py                 #   type-token ratio variants
-│   ├── yules_k.py, hapax_ratio.py      #   lexical-richness metrics
-│   ├── tokenize_char_ngrams.py         #   character n-gram extractor
-│   ├── verify_authorship.py            #   full authorship-verification pipeline
-│   ├── analyze_text.py                 #   spaCy POS / NER demo
-│   ├── extract_entity_relations.py     #   entity extraction
-│   ├── resolve_references.py           #   coreference / reference resolution
-│   └── report.py                       #   pretty-print a stylometric profile
-│
-├── readme/                             # extended setup docs
-│   ├── DEVCONTAINER.md                 #   VS Code dev container setup
-│   ├── OLLAMA_BACKEND.md               #   local Ollama backend setup
-│   └── WEBIS_LLM_BACKEND.md            #   Webis LLM backend setup (Continue extension)
-│
-└── n8n/demo-data/                      # auto-imported on first boot
-    ├── credentials/                    # local Ollama, local Qdrant
-    └── workflows/                      # n8n's original demo
-```
-
-### Two implementations side by side
-
 The repo holds **two parallel approaches** to stylometric analysis:
 
 | Implementation | Where it lives | How to use it |
