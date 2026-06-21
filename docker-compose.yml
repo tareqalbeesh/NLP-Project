@@ -3,6 +3,7 @@ volumes:
   postgres_storage:
   ollama_storage:
   qdrant_storage:
+  redis_storage:
 
 networks:
   demo:
@@ -101,6 +102,8 @@ services:
         condition: service_healthy
       n8n-import:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   qdrant:
     image: qdrant/qdrant
@@ -164,3 +167,28 @@ services:
         - 8000:8000
       depends_on:
         - qdrant
+  redis:
+    image: redis:7-alpine
+    hostname: redis
+    container_name: redis
+    networks: ['demo']
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: redis-insight
+    networks: ['demo']
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    volumes:
+      - ./redis-insight-data:/data
