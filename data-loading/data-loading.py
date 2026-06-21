@@ -1,65 +1,63 @@
+import json
 import redis
-import nltk
-import os
-# 1. Choose a clean, non-sandboxed directory for NLTK data
-custom_nltk_path = os.path.join(os.path.expanduser("~"), "nltk_data")
 
-# 2. Tell NLTK to look ONLY in this specific safe directory
-nltk.data.path = [custom_nltk_path]
+# 1. Connect to your local Redis instance
+r = redis.Redis(
+    host='localhost', 
+    port=6379, 
+    db=0, 
+    decode_responses=True # Converts binary data automatically to clean Python strings
+)
 
-# 3. Explicitly download the dataset into your custom safe folder
-print("Downloading Gutenberg dataset to a secure path...")
-nltk.download('gutenberg', download_dir=custom_nltk_path)
+# Replace this with the actual path to your downloaded file
+JSONL_FILE_PATH = "..\dataset\pan20-authorship-verification-test.jsonl"
 
-from nltk.corpus import gutenberg
+print("Starting Fandom Dataset Migration to Redis...")
+loaded_count = 0
+skipped_count = 0
 
-
-# Ensure NLTK dataset is downloaded locally
-nltk.download('gutenberg')
-
-# Connect to your local or remote Redis instance
-r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-
-def load_full_text_to_redis(file_id, author_label, target_words=600):
-    print(f"Extracting texts from {file_id}...")
-    
-    # Fetch raw words from NLTK corpus
-    words = gutenberg.words(file_id)
-    total_words = len(words)
-    chunk_counter = 0
-    
-    # Slice the entire book into contiguous chunks of ~600 words
-    for i in range(0, total_words, target_words):
-        chunk_words = words[i:i + target_words]
-        
-        # Reconstruct the raw textual body string
-        full_text_content = " ".join(chunk_words)
-        
-        # Clean up punctuation formatting artifacts from joining tokens
-        full_text_content = full_text_content.replace(" .", ".").replace(" ,", ",").replace(" ;", ";")
-        full_text_content = full_text_content.replace(" ?", "?").replace(" !", "!").replace(" ' ", "'")
-        
-        # Validation: Ignore empty strings or small trailing fragments under 50 characters
-        if len(full_text_content.strip()) < 50:
+with open(JSONL_FILE_PATH, 'r', encoding='utf-8') as f:
+    for line in f:
+        # Parse the individual JSON row
+        try:
+            row_data = json.loads(line.strip())
+        except json.JSONDecodeError:
             continue
             
-        # Define a predictable, highly visible Redis Key layout
-        redis_key = f"dataset:gutenberg:author:{author_label}:text:{chunk_counter:04d}"
+        pair_id = row_data['id']
+        fandoms_list = row_data.get('fandoms', [])
         
-        # Construct the payload dictionary
-        # The key 'text' contains the literal, raw text body string—not a URL or path.
+        # Extract Text 1 and Text 2 from the 'pair' array
+        text_1 = row_data['pair'][0]
+        text_2 = row_data['pair'][1]
+        
+        # Enforce your custom n8n code node constraints:
+        # Both texts must be at least 50 characters to analyze safely without failing
+        if len(text_1.strip()) < 50 or len(text_2.strip()) < 50:
+            skipped_count += 1
+            continue
+            
+        # Formulate a structured Redis key pattern
+        redis_key = f"dataset:fandom:pair:{pair_id}"
+        
+        # Build the flat map payload to save in the Redis Hash
+        # Since this particular dataset doesn't explicitly state a ground truth boolean,
+        # we store the fandom origins so your agent can evaluate cross-domain changes.
         payload = {
-            "author": author_label,
-            "text": full_text_content
+            "pair_id": pair_id,
+            "fandom_1": fandoms_list[0] if len(fandoms_list) > 0 else "Unknown",
+            "fandom_2": fandoms_list[1] if len(fandoms_list) > 1 else "Unknown",
+            "text_1": text_1,  # Storing the entire raw text string directly in Redis memory
+            "text_2": text_2   # Storing the entire raw text string directly in Redis memory
         }
         
         # Save the full payload directly into the Redis database memory
         r.hset(redis_key, mapping=payload)
-        chunk_counter += 1
+        loaded_count += 1
+        
+        if loaded_count % 100 == 0:
+            print(f"Loaded {loaded_count} text pairs into Redis...")
 
-    print(f"Successfully saved {chunk_counter} complete text blocks for '{author_label}' directly into Redis.\n")
-
-# ---- Run Migration ----
-load_full_text_to_redis('austen-emma.txt', 'jane_austen')
-load_full_text_to_redis('shakespeare-hamlet.txt', 'william_shakespeare')
-load_full_text_to_redis('melville-moby_dick.txt', 'herman_melville')
+print(f"\nMigration Complete!")
+print(f"Successfully loaded: {loaded_count} pairs.")
+print(f"Skipped due to length rule (<50 chars): {skipped_count} pairs.")

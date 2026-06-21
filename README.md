@@ -66,7 +66,7 @@ The system uses three storage layers, each for a different concern:
 
 | Service | Role | Port | What it holds |
 |---|---|---|---|
-| **Redis** | Primary corpus store | `6379` | Full text content of every indexed author sample, keyed by `dataset:fandom:pair:<id>` etc. Loaded from the PAN20 / NLTK Gutenberg corpora via the [data-loading/](data-loading/) scripts. |
+| **Redis** | Primary corpus store | `6379` | Full text content of every indexed author sample, keyed by `dataset:fandom:pair:<id>`. Loaded from the **PAN20 authorship verification** dataset via the [data-loading/](data-loading/) scripts. |
 | **Qdrant** | Vector store | `6333` | Stylometric fingerprint vectors (198-dim function-word frequencies) for nearest-author retrieval. |
 | **Postgres** | n8n metadata | (internal) | n8n's own workflows, executions, credentials. Not used directly by the analysis. |
 | **RedisInsight** | Redis GUI | `5540` | Browser-based inspector for Redis — see <http://localhost:5540> to browse the indexed corpus visually. |
@@ -199,17 +199,21 @@ in n8n → Execute → submit for each known author:
 
 Each submission returns `status: indexed` plus a corpus snapshot.
 
-### Option B — bulk-load from a public corpus (via Redis)
+### Option B — bulk-load the PAN20 corpus into Redis
 
-For a real evaluation corpus (PAN20 authorship verification, NLTK
-Gutenberg, etc.) use the [data-loading/](data-loading/) Python scripts —
-they pull from the source, chunk the text by author, and write it into
-Redis under deterministic keys.
+For a real evaluation corpus, use the [data-loading/](data-loading/)
+Python scripts. They read the **PAN20 authorship verification**
+dataset (`pan20-authorship-verification-test.jsonl`) and load each
+text pair into Redis under the key pattern `dataset:fandom:pair:<id>`,
+storing `text_1`, `text_2`, `fandom_1`, `fandom_2`, and `pair_id`.
+
+Download the PAN20 dataset and place the JSONL inside `dataset/` (which
+is gitignored). Then from the repo root, in a Python env that has the
+`redis` package installed:
 
 ```bash
-# from the repo root, inside a Python env that has `redis` and `nltk`
-python data-loading/data-loading.py     # bulk-ingest Gutenberg
-python data-loading/reading-authors.py  # enumerate unique authors in Redis
+python data-loading/data-loading.py     # bulk-load PAN20 pairs into Redis
+python data-loading/reading-authors.py  # scan Redis and enumerate unique fandoms
 ```
 
 After loading, browse the indexed corpus visually at
