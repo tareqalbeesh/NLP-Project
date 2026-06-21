@@ -91,8 +91,9 @@ The model `llama3-8b` does **not** support tools and won't work for the agentic 
 │   └── requirements.txt
 │
 ├── n8n/forensic-workflows/             # importable n8n workflows
-│   ├── main_workflow_code_tools.json   # primary agentic workflow (10 tools)
-│   ├── attribute_deterministic.json    # authorship attribution
+│   ├── forensic_linguist_agent.json    # ★ PRIMARY — chat-based, 6 inline tools, Ollama + Redis memory
+│   ├── main_workflow_code_tools.json   # alternative agentic workflow (form-based, 10 HTTP tools)
+│   ├── attribute_deterministic.json    # authorship attribution (deterministic protocol)
 │   ├── baseline_no_llm.json            # verification, no LLM
 │   ├── index_author.json               # corpus builder
 │   ├── main_workflow_updated.json      # variant using sub-workflows-as-tools
@@ -221,12 +222,16 @@ Expected: JSON with `N`, `V`, `TTR`, `Yule_K`, etc.
 
 | File | Purpose |
 |---|---|
-| `main_workflow_code_tools.json` | Open-ended agentic stylometric analysis (10 tools) |
+| ★ `forensic_linguist_agent.json` | **Primary** — chat-based agent, all 6 tools inline JS, Ollama + Redis memory. Start here. |
+| `main_workflow_code_tools.json` | Alternative agent (form-based, 10 tools, HTTP-calls into nltk-tools) |
 | `attribute_deterministic.json` | Authorship attribution — deterministic protocol |
 | `baseline_no_llm.json` | Verification baseline (no LLM) |
 | `index_author.json` | Corpus builder — index known-author samples |
 
-5. After importing each workflow, **open the OpenAI Model node** and confirm the model dropdown is `qwen3-30b-a3b` (or another tool-capable Webis model). If the dropdown is red/empty, pick it manually.
+5. **After importing the primary workflow `forensic_linguist_agent.json`, re-attach the credentials** (n8n strips them on export so they show as red/missing):
+   - **Ollama Chat Model node** → click it → under Credential, pick or create an Ollama credential pointing at `http://ollama:11434`. The workflow's default model is `minimax-m3` — if you don't have it pulled, change the dropdown to any tool-capable Ollama model you do have (`llama3.2`, `qwen2.5`, etc.) or run `docker compose exec ollama-gpu ollama pull minimax-m3`.
+   - **Redis Chat Memory node** → pick or create a Redis credential pointing at host `redis`, port `6379`, db `0` (the same Redis service the corpus uses; n8n keys go in a separate namespace).
+6. For the **other workflows** (`main_workflow_code_tools`, `attribute_deterministic`), open the OpenAI Model node and confirm the model is `qwen3-30b-a3b` (or another tool-capable Webis model).
 
 ---
 
@@ -270,23 +275,43 @@ in the corpus — no n8n changes needed.
 
 ## Testing the system
 
-### 1. Agentic stylistic analysis
+### 1. Primary workflow — chat-based agent ★
 
-Open **`Forensic linguist agent`** (the main workflow) → Execute → upload
+Open **`Forensic Linguist Agent`** (the imported primary workflow) → click
+**"Open Chat"** (bottom of the canvas). Paste two sample passages directly
+into the chat — no file upload needed:
+
+> *Were these two passages written by the same author?*
+> *Text A: "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families..."*
+> *Text B: "In my younger and more vulnerable years my father gave me some advice that I have been turning over in my mind ever since. Whenever you feel like criticizing anyone, he told me, just remember that all the people in this world haven't had the advantages that you've had..."*
+
+The agent should call `verify_authorship`, `compare_stylistic_profiles`,
+and `vocabulary_richness` automatically, then return a structured
+verdict: **Same/Different Author + Confidence Score + Evidence**. All
+math runs inline as JavaScript — no `nltk-tools` service required for
+this workflow.
+
+Watch the canvas — tool nodes should highlight as they fire. Conversation
+history is stored in Redis so follow-ups like *"Now compare against this
+third sample…"* work.
+
+### 2. Alternative agentic workflow (HTTP-based)
+
+If you want to test the FastAPI-backed agent instead, open
+**`Forensic linguist agent`** (the form-based workflow) → Execute → upload
 `shared/sample_austen.txt` with instructions like:
 
 > *Run vocab_richness, function_word_freqs, and pos_distribution on this document. Cite the exact numeric values from each tool's output.*
 
-Watch the canvas — tool nodes should highlight as they fire. The output
-should cite real numbers like `TTR: 0.5469`, `N: 309`. **Numbers should match
-what `curl` returns from the same endpoint.**
-
-In a second terminal tail the Python service to see calls land:
+Tail the Python service to see calls land:
 ```bash
 docker compose logs -f nltk-tools
 ```
 
-### 2. Authorship attribution (deterministic)
+The output should cite real numbers like `TTR: 0.5469`, `N: 309` — these
+should match what `curl http://localhost:8000/vocab_richness` returns.
+
+### 3. Authorship attribution (deterministic)
 
 Open **`Forensic Attribution (deterministic protocol)`** → Execute →
 upload `shared/sample_austen.txt`. No instructions field — this workflow
@@ -297,7 +322,7 @@ Expected: a feature-by-feature comparison table plus a verdict naming
 `docker compose logs nltk-tools`: one POST `/extract_all_features` (for the
 unknown), one GET `/extract_corpus_features` (for the corpus).
 
-### 3. Verification baseline (no LLM)
+### 4. Verification baseline (no LLM)
 
 Open **`Forensic Linguist Baseline (no LLM)`** → Execute → upload
 `shared/sample_austen.txt` as Text A and `shared/sample_fitzgerald.txt`
