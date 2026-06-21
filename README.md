@@ -299,22 +299,6 @@ workflow is the cleanest implementation of one of those:
 
 ---
 
-## Common issues
-
-| Symptom | Fix |
-|---|---|
-| `no configuration file provided: not found` | You're in the wrong directory. `cd` to the repo root. |
-| n8n shows credential error on workflow open | The credentials are encrypted with `N8N_ENCRYPTION_KEY` and tied to your machine. Re-create the OpenAI credential in n8n's UI. |
-| Tool nodes never fire / agent narrates "I'll use a tool..." | Model isn't tool-capable. Switch to `qwen3-30b-a3b` (not `llama3-8b`). |
-| `Tool error: fetch is not defined` | Code Tools must use `this.helpers.httpRequest({...})`, not `fetch`. |
-| `nltk-tools` keeps restarting | Check `docker compose logs nltk-tools`. Usually Qdrant wasn't ready yet — `docker compose restart nltk-tools` after Qdrant is up. |
-| Agent calls a tool but result is wrong numbers | The model truncated/summarised the document. Use the deterministic workflow instead. |
-| Webhook ID collision on form submit | You imported two workflows with the same `webhookId`. Delete the old workflow. |
-| `redis.exceptions.ConnectionError` when running data-loading scripts | The script tries `localhost:6379`. From the host machine that works. From inside another container, use `redis:6379`. |
-| RedisInsight at `:5540` shows no keys after data-loading | The script writes to `db=0`. In RedisInsight → Add a database with host `localhost`, port `6379`, db `0`. |
-
----
-
 ## Useful commands
 
 ```bash
