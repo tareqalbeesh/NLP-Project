@@ -1,1 +1,9 @@
 .env
+
+# Runtime data — persistent volumes mounted into containers
+redis-data/
+redis-insight-data/
+shared/runs/
+
+# Datasets — too large for git, should be downloaded separately
+dataset/
