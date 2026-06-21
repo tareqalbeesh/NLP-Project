@@ -27,33 +27,49 @@ Plus a **corpus-builder** workflow for indexing known-author samples into Qdrant
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          Docker network: "demo"                          │
-│                                                                          │
-│   ┌─────────┐    ┌───────────┐    ┌──────────┐    ┌────────────────┐     │
-│   │  n8n    │    │ postgres  │    │  qdrant  │    │    ollama      │     │
-│   │ :5678   │◄──►│   :5432   │    │  :6333   │    │    :11434      │     │
-│   └────┬────┘    └───────────┘    └────┬─────┘    └────────────────┘     │
-│        │              n8n's DB         │ vector store     LLM (local)    │
-│        │                               │                                 │
-│        │      HTTP tool calls          │                                 │
-│        ▼                               ▼                                 │
-│   ┌────────────────────────────────────────────────────┐                 │
-│   │           nltk-tools (FastAPI, :8000)              │                 │
-│   │                                                    │                 │
-│   │  Stylometric feature endpoints:                    │                 │
-│   │    /char_ngrams, /vocab_richness,                  │                 │
-│   │    /function_word_freqs, /pos_distribution,        │                 │
-│   │    /sentence_length_stats, /punctuation_profile    │                 │
-│   │                                                    │                 │
-│   │  Authorship endpoints (backed by qdrant):          │                 │
-│   │    /index_author, /list_samples, /list_authors,    │                 │
-│   │    /get_sample_text, /compare_two_texts,           │                 │
-│   │    /attribute, /extract_all_features,              │                 │
-│   │    /extract_corpus_features                        │                 │
-│   └────────────────────────────────────────────────────┘                 │
-└──────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                          Docker network: "demo"                            │
+│                                                                            │
+│   ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌─────────┐  ┌──────────────┐    │
+│   │  n8n    │  │ postgres │  │  redis  │  │ qdrant  │  │   ollama     │    │
+│   │ :5678   │  │  :5432   │  │  :6379  │  │  :6333  │  │   :11434     │    │
+│   └────┬────┘  └──────────┘  └────┬────┘  └────┬────┘  └──────────────┘    │
+│        │      n8n's metadata DB   │ corpus DB  │ vectors    LLM (local)    │
+│        │                          │            │                           │
+│        │                          ▼            ▼                           │
+│        │                  ┌──────────────────────┐                         │
+│        │                  │   redis-insight      │  Redis GUI (browser)    │
+│        │                  │       :5540          │  http://localhost:5540  │
+│        │                  └──────────────────────┘                         │
+│        │      HTTP tool calls                                              │
+│        ▼                                                                   │
+│   ┌──────────────────────────────────────────────────────┐                 │
+│   │           nltk-tools (FastAPI, :8000)                │                 │
+│   │                                                      │                 │
+│   │  Stylometric feature endpoints:                      │                 │
+│   │    /char_ngrams, /vocab_richness,                    │                 │
+│   │    /function_word_freqs, /pos_distribution,          │                 │
+│   │    /sentence_length_stats, /punctuation_profile      │                 │
+│   │                                                      │                 │
+│   │  Authorship endpoints (backed by qdrant + redis):    │                 │
+│   │    /index_author, /list_samples, /list_authors,      │                 │
+│   │    /get_sample_text, /compare_two_texts,             │                 │
+│   │    /attribute, /extract_all_features,                │                 │
+│   │    /extract_corpus_features                          │                 │
+│   └──────────────────────────────────────────────────────┘                 │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Data layer
+
+The system uses three storage layers, each for a different concern:
+
+| Service | Role | Port | What it holds |
+|---|---|---|---|
+| **Redis** | Primary corpus store | `6379` | Full text content of every indexed author sample, keyed by `dataset:fandom:pair:<id>` etc. Loaded from the PAN20 / NLTK Gutenberg corpora via the [data-loading/](data-loading/) scripts. |
+| **Qdrant** | Vector store | `6333` | Stylometric fingerprint vectors (198-dim function-word frequencies) for nearest-author retrieval. |
+| **Postgres** | n8n metadata | (internal) | n8n's own workflows, executions, credentials. Not used directly by the analysis. |
+| **RedisInsight** | Redis GUI | `5540` | Browser-based inspector for Redis — see <http://localhost:5540> to browse the indexed corpus visually. |
 
 The LLM is reached via an **OpenAI-compatible endpoint** — Webis-hosted (recommended,
 `https://chat.web.webis.de/openai/`) or your local Ollama. Tool-capable
@@ -85,6 +101,11 @@ The model `llama3-8b` does **not** support tools and won't work for the agentic 
 ├── shared/                             # mounted into n8n as /data/shared
 │   ├── sample_austen.txt               # Pride and Prejudice opening
 │   └── sample_fitzgerald.txt           # The Great Gatsby opening
+│
+├── data-loading/                       # populate Redis from public corpora
+│   ├── data-loading.py                 #   chunk NLTK Gutenberg texts into Redis
+│   ├── data-loading2.py                #   variant ingestion pipeline
+│   └── reading-authors.py              #   enumerate unique authors in Redis
 │
 ├── functions/                          # standalone Python reference implementation
 │   ├── ttr.py, rttr.py                 #   type-token ratio variants
@@ -171,7 +192,9 @@ Verify it's up:
 docker compose ps
 ```
 
-Five services should be `Up`: `n8n`, `nltk-tools`, `postgres`, `qdrant`, `ollama-gpu`/`-cpu`/`-gpu-amd`. Two helper containers `n8n-import` and `ollama-pull-llama-*` exit cleanly with code 0.
+Seven services should be `Up`: `n8n`, `nltk-tools`, `postgres`, `redis`,
+`redis-insight`, `qdrant`, `ollama-gpu`/`-cpu`/`-gpu-amd`. Two helper
+containers `n8n-import` and `ollama-pull-llama-*` exit cleanly with code 0.
 
 Smoke-test the Python service:
 
@@ -209,20 +232,39 @@ Expected: JSON with `N`, `V`, `TTR`, `Yule_K`, etc.
 
 ## Build a reference corpus
 
-The attribution workflow needs known-author samples in Qdrant first.
+You have two options depending on how large a corpus you want.
 
-Open **Index Author Sample** → Execute → submit for each known author:
+### Option A — small handcrafted corpus (via n8n)
+
+For a few known samples (good for testing): open **Index Author Sample**
+in n8n → Execute → submit for each known author:
 
 | Author label | Sample file |
 |---|---|
 | `austen`      | `shared/sample_austen.txt` |
 | `fitzgerald`  | `shared/sample_fitzgerald.txt` |
 
-Each submission returns `status: indexed` plus a corpus snapshot. The
-corpus persists in the `qdrant_storage` Docker volume across restarts.
+Each submission returns `status: indexed` plus a corpus snapshot.
 
-Add as many authors / samples as you like — the attribution workflow
-automatically includes them all.
+### Option B — bulk-load from a public corpus (via Redis)
+
+For a real evaluation corpus (PAN20 authorship verification, NLTK
+Gutenberg, etc.) use the [data-loading/](data-loading/) Python scripts —
+they pull from the source, chunk the text by author, and write it into
+Redis under deterministic keys.
+
+```bash
+# from the repo root, inside a Python env that has `redis` and `nltk`
+python data-loading/data-loading.py     # bulk-ingest Gutenberg
+python data-loading/reading-authors.py  # enumerate unique authors in Redis
+```
+
+After loading, browse the indexed corpus visually at
+**<http://localhost:5540>** (RedisInsight). The corpus persists in
+`./redis-data/` (mounted as a bind volume) across container restarts.
+
+Either way, the attribution workflow automatically includes everything
+in the corpus — no n8n changes needed.
 
 ---
 
@@ -295,6 +337,8 @@ workflow is the cleanest implementation of one of those:
 | `nltk-tools` keeps restarting | Check `docker compose logs nltk-tools`. Usually Qdrant wasn't ready yet — `docker compose restart nltk-tools` after Qdrant is up. |
 | Agent calls a tool but result is wrong numbers | The model truncated/summarised the document. Use the deterministic workflow instead. |
 | Webhook ID collision on form submit | You imported two workflows with the same `webhookId`. Delete the old workflow. |
+| `redis.exceptions.ConnectionError` when running data-loading scripts | The script tries `localhost:6379`. From the host machine that works. From inside another container, use `redis:6379`. |
+| RedisInsight at `:5540` shows no keys after data-loading | The script writes to `db=0`. In RedisInsight → Add a database with host `localhost`, port `6379`, db `0`. |
 
 ---
 
@@ -328,6 +372,8 @@ docker compose --profile gpu-nvidia down -v
 - **Docker Compose** orchestration
 - **n8n** — agentic workflow runtime
 - **FastAPI** — Python tool backend (NLTK, spaCy, scikit-learn)
+- **Redis** — primary corpus store (full text of indexed author samples)
+- **RedisInsight** — browser-based Redis GUI (`localhost:5540`)
 - **Qdrant** — vector store for author fingerprints (cosine similarity)
 - **Postgres** — n8n's metadata store
 - **Ollama** — optional local LLM (Llama 3.2 by default; tool-capable)
