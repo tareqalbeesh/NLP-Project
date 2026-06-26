@@ -171,6 +171,7 @@ Expected: JSON with `N`, `V`, `TTR`, `Yule_K`, etc.
 | File | Purpose |
 |---|---|
 | ★ `forensic_linguist_agent.json` | **Primary** — chat-based agent, all 6 tools inline JS, Ollama + Redis memory. Start here. |
+| `eval_agent_verify.json` | Webhook-triggered variant of the primary agent — for programmatic evaluation (`metrics-generating-test/test_agent.py`). |
 | `main_workflow_code_tools.json` | Alternative agent (form-based, 10 tools, HTTP-calls into nltk-tools) |
 | `attribute_deterministic.json` | Authorship attribution — deterministic protocol |
 | `baseline_no_llm.json` | Verification baseline (no LLM) |
@@ -199,21 +200,22 @@ in n8n → Execute → submit for each known author:
 
 Each submission returns `status: indexed` plus a corpus snapshot.
 
-### Option B — bulk-load the PAN20 corpus into Redis
+### Option B — bulk-load a public corpus into Redis
 
-For a real evaluation corpus, use the [data-loading/](data-loading/)
-Python scripts. They read the **PAN20 authorship verification**
-dataset (`pan20-authorship-verification-test.jsonl`) and load each
-text pair into Redis under the key pattern `dataset:fandom:pair:<id>`,
-storing `text_1`, `text_2`, `fandom_1`, `fandom_2`, and `pair_id`.
+For real evaluation, use the [data-loading/](data-loading/) Python
+scripts. Two datasets are supported:
 
-Download the PAN20 dataset and place the JSONL inside `dataset/` (which
-is gitignored). Then from the repo root, in a Python env that has the
-`redis` package installed:
+**B1. PAN21 authorship verification** ([Zenodo](https://zenodo.org/records/5106099)) — cross-domain fanfiction text pairs with same-author / different-author labels. Keys: `dataset:fandom:pair:<id>` → `text_1`, `text_2`, `fandom_1`, `fandom_2`.
 
 ```bash
-python data-loading/data-loading.py     # bulk-load PAN20 pairs into Redis
-python data-loading/reading-authors.py  # scan Redis and enumerate unique fandoms
+python data-loading/data-loading.py     # bulk-load PAN21 pairs
+python data-loading/reading-authors.py  # enumerate unique fandoms
+```
+
+**B2. Reuters C50 50/50** — 50 authors × 50 news articles each. Keys: `dataset:reuters5050:author:<author>:doc:<NNN>` → `text`, `author`. Used by the [evaluation harness](#evaluation).
+
+```bash
+python data-loading/reuters-dataset-loading.py
 ```
 
 After loading, browse the indexed corpus visually at
@@ -300,6 +302,65 @@ workflow is the cleanest implementation of one of those:
   reasoning flexibility.
 - **No-LLM baseline** — what stylometry can do without any agent. The
   agent's value-add is the difference between these two.
+
+---
+
+## Evaluation
+
+Two scripts under [metrics-generating-test/](metrics-generating-test/)
+benchmark the system on a labeled corpus loaded in Redis (Reuters C50,
+see [Option B2 above](#option-b--bulk-load-a-public-corpus-into-redis)).
+Both use the same stratified sampling (balanced same-author /
+different-author pairs, fixed seed) so their numbers are comparable.
+
+### Baseline — pure stylometric distance (no LLM)
+
+`metrics-generating-test/test1.py` POSTs each pair to the FastAPI
+`/compare_two_texts` endpoint and uses the returned `overall_similarity`
+score. Fast — runs 500 pairs in ~2 minutes.
+
+```bash
+pip install redis requests scikit-learn
+python metrics-generating-test/test1.py
+```
+
+Output: accuracy, precision, recall, F1, AUC-ROC, plus the full
+classification report. Per-pair results written to
+`results/baseline_eval.json`.
+
+### Agent — full LLM-in-the-loop verification
+
+`metrics-generating-test/test_agent.py` POSTs each pair to the
+`eval_agent_verify.json` webhook (a webhook-triggered twin of the
+primary chat agent, no Redis memory) and parses the `VERDICT:` /
+`SCORE:` markers the agent is required to emit.
+
+```bash
+# Defaults to 20 pairs (smoke test, 5-10 min). Use -n 100 for the headline run.
+python metrics-generating-test/test_agent.py
+python metrics-generating-test/test_agent.py -n 100 --timeout 180
+```
+
+The agent run is slow (5–30 s per pair, depending on how many tools the
+model decides to call), so don't try 500 pairs unless you have an
+afternoon. Per-pair results + elapsed timings written to
+`results/agent_eval.json`.
+
+**Prerequisites for the agent eval:**
+- `eval_agent_verify.json` imported AND **activated** in n8n (production
+  webhook URL only listens when the workflow is Active — flip the
+  top-right toggle).
+- Ollama credential re-attached to the workflow's Ollama Chat Model node.
+- The model named in the workflow (`minimax-m3` by default) pulled into
+  Ollama, OR change the dropdown to whichever tool-capable model you have.
+
+### Comparing baseline vs agent
+
+Run both scripts on the same Reuters C50 sample (same `--seed`) and put
+the metrics side-by-side. The interesting question for your report:
+does the agent's reasoning loop actually improve the verdict over a
+threshold on the deterministic similarity score, or does the LLM just
+narrate the same numbers?
 
 ---
 
