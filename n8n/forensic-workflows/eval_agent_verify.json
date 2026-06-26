@@ -1,0 +1,290 @@
+{
+  "name": "Eval Agent Verify (webhook)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "eval-verify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        0
+      ],
+      "id": "34857150-fc5a-4a6e-9169-056d193ecdd5",
+      "name": "Webhook",
+      "webhookId": "f22e7c72-181e-4064-8b48-53f9d91ec00d"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Compare these two texts and determine if they were written by the same author. Use your stylometric tools as needed.\n\nText A:\n{{ $json.body.text_a }}\n\nText B:\n{{ $json.body.text_b }}",
+        "options": {
+          "systemMessage": "You are a Forensic Linguist Agent specialized in authorship analysis.\nYour goal is to analyze writing style (idiolect) — HOW something is written, not WHAT is written.\n\nYou support TWO types of analysis tasks:\n\n## Task 1: AUTHORSHIP VERIFICATION\nWhen the user provides two texts and asks if they were written by the same author:\n- Use the verify_authorship tool as the PRIMARY tool\n- Cross-reference with compare_stylistic_profiles for comprehensive analysis\n- Report: Same/Different Author + Confidence Score (0.0-1.0) + Evidence\n\n## Task 2: AUTHORSHIP ATTRIBUTION\nWhen the user provides candidate authors with known texts and a disputed text:\n- Use the verify_authorship tool for EACH candidate vs. the disputed text\n- Use compare_stylistic_profiles for each candidate comparison\n- Rank candidates by similarity score\n- Report: Most Likely Author + Confidence Score + Comparison Table\n\n## GENERAL PRINCIPLES\n- Focus on style features: lexical preferences, grammatical constructions, punctuation habits, vocabulary richness\n- Content/topic is irrelevant noise — ignore it\n- Always report uncertainty and confidence levels\n- Base conclusions on evidence from tool outputs, not intuition\n- If multiple analyses support the same conclusion, increase confidence\n- If analyses conflict, report the disagreement explicitly\n- Always call tools to gather EVIDENCE before forming a conclusion\n\n## RESPONSE FORMAT\nAlways respond with:\n1. **Analysis Type**: Verification or Attribution\n2. **Summary**: One-paragraph conclusion\n3. **Evidence**: Key findings from each tool (scores, metrics, patterns)\n4. **Confidence Score**: 0.0 to 1.0 with explanation\n5. **Limitations**: What the analysis cannot determine\n\nWhen multiple candidates are provided, include a RANKING TABLE showing each candidate's similarity score.\n\n=== EVALUATION OUTPUT REQUIREMENT (mandatory) ===\nAfter your natural-language analysis, ALWAYS finish your response with EXACTLY these two lines, in this exact format and order, with NO extra punctuation, markdown, or quotes around them:\nVERDICT: SAME\nSCORE: 0.83\n\nRules:\n- Use \"VERDICT: SAME\" if you conclude the two texts share an author.\n- Use \"VERDICT: DIFFERENT\" if you conclude they do not.\n- Use \"VERDICT: UNKNOWN\" only if neither is supportable (this counts as no decision).\n- SCORE must be a single decimal between 0.00 and 1.00 expressing your confidence in the verdict itself (NOT the similarity).\n- These two lines must appear at the very end of your response, after any prose analysis.\n- Do not omit them. Do not add extra fields."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -200,
+        0
+      ],
+      "id": "728fc357-f7a9-47e5-ae26-81843c818fee",
+      "name": "Eval Agent"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.output }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        0
+      ],
+      "id": "c73b5be6-4599-410e-86c0-f283a0a323ea",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "model": "minimax-m3",
+        "options": {}
+      },
+      "id": "30b63acc-6f9f-4017-8e05-5215e26af15b",
+      "name": "Ollama Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "position": [
+        -400,
+        420
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "ollamaApi": {
+          "id": "nWBahqEIFeyjl0fe",
+          "name": "Ollama account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "PRIMARY TOOL: Verify if two texts were written by the same author using character n-gram analysis. Extracts character n-gram profiles (configurable order, default 3) and computes cosine or Jaccard similarity. Returns: score (0-1, higher=more similar), confidence, common n-grams, and n-gram counts. Use for BOTH verification and attribution tasks. Input: known_text (required, string), questioned_text (required, string), ngram_order (optional, default 3), metric (optional, 'cosine' or 'jaccard', default 'cosine'), top_k (optional, default 300).",
+        "jsCode": "const knownText = query.known_text || '';\nconst questionedText = query.questioned_text || '';\nconst ngramOrder = query.ngram_order || 3;\nconst metric = query.metric || 'cosine';\nconst topK = query.top_k || 300;\n\nif (!knownText || knownText.trim().length < 20) {\n  return JSON.stringify({ error: 'known_text too short (min 20 chars)', confidence: 0 });\n}\nif (!questionedText || questionedText.trim().length < 20) {\n  return JSON.stringify({ error: 'questioned_text too short (min 20 chars)', confidence: 0 });\n}\n\n// tokenize_char_ngrams\nfunction tokenizeCharNgrams(text, n) {\n  const normalized = text.replace(/\\s+/g, ' ');\n  if (n <= 0 || normalized.length < n) return [];\n  const ngrams = [];\n  for (let i = 0; i <= normalized.length - n; i++) {\n    ngrams.push(normalized.substring(i, i + n));\n  }\n  return ngrams;\n}\n\n// Count n-grams\nfunction countNgrams(text, n) {\n  const tokens = tokenizeCharNgrams(text, n);\n  const counts = {};\n  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;\n  return counts;\n}\n\n// Get top-k\nfunction getTopK(counts, k) {\n  return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, k);\n}\n\nconst knownCounts = countNgrams(knownText, ngramOrder);\nconst questionedCounts = countNgrams(questionedText, ngramOrder);\nconst knownTop = Object.fromEntries(getTopK(knownCounts, topK));\nconst questionedTop = Object.fromEntries(getTopK(questionedCounts, topK));\n\nconst vocab = [...new Set([...Object.keys(knownTop), ...Object.keys(questionedTop)])].sort();\nconst vecKnown = vocab.map(ng => knownTop[ng] || 0);\nconst vecQuest = vocab.map(ng => questionedTop[ng] || 0);\n\nlet score = 0;\nif (metric === 'cosine') {\n  let dot = 0, normK = 0, normQ = 0;\n  for (let i = 0; i < vocab.length; i++) {\n    dot += vecKnown[i] * vecQuest[i];\n    normK += vecKnown[i] * vecKnown[i];\n    normQ += vecQuest[i] * vecQuest[i];\n  }\n  if (normK && normQ) score = dot / (Math.sqrt(normK) * Math.sqrt(normQ));\n} else if (metric === 'jaccard') {\n  const setK = new Set(Object.keys(knownTop));\n  const setQ = new Set(Object.keys(questionedTop));\n  let intersection = 0;\n  for (const k of setK) if (setQ.has(k)) intersection++;\n  const union = new Set([...setK, ...setQ]).size;\n  if (union) score = intersection / union;\n}\n\nconst commonNgrams = Object.keys(knownTop).filter(k => k in questionedTop).sort();\nconst confidence = Math.min(1, Math.log(1 + questionedText.length) / 10);\n\nreturn JSON.stringify({\n  score: Math.round(score * 10000) / 10000,\n  confidence: Math.round(confidence * 10000) / 10000,\n  common_ngrams_count: commonNgrams.length,\n  common_ngrams_sample: commonNgrams.slice(0, 15),\n  known_unique_ngrams: Object.keys(knownTop).length,\n  questioned_unique_ngrams: Object.keys(questionedTop).length,\n  metric_used: metric,\n  ngram_order: ngramOrder,\n  interpretation: score > 0.85 ? 'STRONG MATCH - Very likely same author' : score > 0.65 ? 'MODERATE MATCH - Possibly same author' : score > 0.4 ? 'WEAK MATCH - Uncertain' : 'LOW MATCH - Likely different authors'\n});",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"known_text\": {\n      \"type\": \"string\",\n      \"description\": \"The known author's text passage (verbatim, ≥20 chars).\"\n    },\n    \"questioned_text\": {\n      \"type\": \"string\",\n      \"description\": \"The questioned text passage to compare against the known one (verbatim, ≥20 chars).\"\n    },\n    \"ngram_order\": {\n      \"type\": \"number\",\n      \"description\": \"Character n-gram size. Default 3.\"\n    },\n    \"metric\": {\n      \"type\": \"string\",\n      \"description\": \"Similarity metric: 'cosine' or 'jaccard'. Default 'cosine'.\"\n    },\n    \"top_k\": {\n      \"type\": \"number\",\n      \"description\": \"How many top n-grams to keep per text. Default 300.\"\n    }\n  },\n  \"required\": [\n    \"known_text\",\n    \"questioned_text\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        -400,
+        220
+      ],
+      "id": "c22c27f6-c56d-4ba6-9a8f-5e4f00109af8",
+      "name": "verify_authorship"
+    },
+    {
+      "parameters": {
+        "description": "Comprehensive stylistic profile comparison between two texts. Combines character n-gram features, lexical diversity metrics (TTR, RTTR, hapax ratio, Yule's K), and distinctive n-gram analysis. Returns side-by-side comparison of all metrics. Use for detailed analysis alongside verify_authorship. Input: known_text (required), questioned_text (required).",
+        "jsCode": "const knownText = query.known_text || '';\nconst questionedText = query.questioned_text || '';\n\nif (!knownText || knownText.trim().length < 20 || !questionedText || questionedText.trim().length < 20) {\n  return JSON.stringify({ error: 'Both texts must be at least 20 characters', confidence: 0 });\n}\n\n// === N-gram Features ===\nfunction tokenizeCharNgrams(text, n) {\n  const normalized = text.replace(/\\s+/g, ' ');\n  if (n <= 0 || normalized.length < n) return [];\n  const ngrams = [];\n  for (let i = 0; i <= normalized.length - n; i++) ngrams.push(normalized.substring(i, i + n));\n  return ngrams;\n}\n\nfunction countNgrams(text, n) {\n  const tokens = tokenizeCharNgrams(text, n);\n  const counts = {};\n  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;\n  return counts;\n}\n\nconst knownNgrams3 = countNgrams(knownText, 3);\nconst questionedNgrams3 = countNgrams(questionedText, 3);\nconst topKnown = Object.entries(knownNgrams3).sort((a, b) => b[1] - a[1]).slice(0, 10);\nconst topQuestioned = Object.entries(questionedNgrams3).sort((a, b) => b[1] - a[1]).slice(0, 10);\nconst knownKeys = new Set(topKnown.map(e => e[0]));\nconst questionedKeys = new Set(topQuestioned.map(e => e[0]));\nconst uniqueToKnown = [...knownKeys].filter(k => !questionedKeys.has(k));\nconst uniqueToQuestioned = [...questionedKeys].filter(k => !knownKeys.has(k));\n\n// === Lexical Metrics (from user's ttr, rttr, hapax_ratio, yules_k) ===\nfunction ttr(tokens) { return tokens.length > 0 ? new Set(tokens).size / tokens.length : 0; }\nfunction rttr(tokens) { return tokens.length > 0 ? new Set(tokens).size / Math.sqrt(tokens.length) : 0; }\nfunction hapaxRatio(tokens) {\n  const counts = {};\n  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;\n  const hapaxes = Object.values(counts).filter(c => c === 1).length;\n  const types = Object.keys(counts).length;\n  return types > 0 ? hapaxes / types : 0;\n}\nfunction yulesK(tokens) {\n  const counts = {};\n  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;\n  const freqSpectrum = {};\n  for (const c of Object.values(counts)) freqSpectrum[c] = (freqSpectrum[c] || 0) + 1;\n  const N = tokens.length;\n  if (N === 0) return 0;\n  let s = 0;\n  for (const [i, vI] of Object.entries(freqSpectrum)) s += Math.pow(parseInt(i), 2) * vI;\n  return 10000 * (s - N) / (N * N);\n}\n\nconst knownTokens = knownText.toLowerCase().match(/\\b[a-z']+\\b/g) || [];\nconst questionedTokens = questionedText.toLowerCase().match(/\\b[a-z']+\\b/g) || [];\n\nconst knownMetrics = {\n  tokens: knownTokens.length,\n  types: new Set(knownTokens).size,\n  ttr: Math.round(ttr(knownTokens) * 10000) / 10000,\n  rttr: Math.round(rttr(knownTokens) * 10000) / 10000,\n  hapax_ratio: Math.round(hapaxRatio(knownTokens) * 10000) / 10000,\n  yules_k: Math.round(yulesK(knownTokens) * 100) / 100\n};\nconst questionedMetrics = {\n  tokens: questionedTokens.length,\n  types: new Set(questionedTokens).size,\n  ttr: Math.round(ttr(questionedTokens) * 10000) / 10000,\n  rttr: Math.round(rttr(questionedTokens) * 10000) / 10000,\n  hapax_ratio: Math.round(hapaxRatio(questionedTokens) * 10000) / 10000,\n  yules_k: Math.round(yulesK(questionedTokens) * 100) / 100\n};\n\n// Compare metrics\nconst metricDifferences = {};\nfor (const key of ['ttr', 'rttr', 'hapax_ratio', 'yules_k']) {\n  metricDifferences[key] = {\n    known: knownMetrics[key],\n    questioned: questionedMetrics[key],\n    difference: Math.round(Math.abs(knownMetrics[key] - questionedMetrics[key]) * 10000) / 10000\n  };\n}\n\nreturn JSON.stringify({\n  ngram_features: {\n    top_known_ngrams: Object.fromEntries(topKnown),\n    top_questioned_ngrams: Object.fromEntries(topQuestioned),\n    unique_to_known: uniqueToKnown,\n    unique_to_questioned: uniqueToQuestioned,\n    known_ngram_count: Object.keys(knownNgrams3).length,\n    questioned_ngram_count: Object.keys(questionedNgrams3).length\n  },\n  lexical_metrics: {\n    known_author: knownMetrics,\n    questioned: questionedMetrics,\n    comparison: metricDifferences\n  },\n  overall_assessment: {\n    vocabulary_similarity: Math.round((1 - metricDifferences.ttr.difference) * 10000) / 10000,\n    yules_k_similarity: knownMetrics.yules_k > 0 && questionedMetrics.yules_k > 0 ? Math.round((1 - Math.abs(knownMetrics.yules_k - questionedMetrics.yules_k) / Math.max(knownMetrics.yules_k, questionedMetrics.yules_k)) * 10000) / 10000 : 0\n  }\n});",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"known_text\": {\n      \"type\": \"string\",\n      \"description\": \"The known author's text passage (verbatim, ≥20 chars).\"\n    },\n    \"questioned_text\": {\n      \"type\": \"string\",\n      \"description\": \"The questioned text passage to compare (verbatim, ≥20 chars).\"\n    }\n  },\n  \"required\": [\n    \"known_text\",\n    \"questioned_text\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        -200,
+        220
+      ],
+      "id": "b8c2ea28-0238-4a9e-81e2-d5ba5a5f5afe",
+      "name": "compare_stylistic_profiles"
+    },
+    {
+      "parameters": {
+        "description": "Detect error patterns and linguistic anomalies in text. Uses spaCy-inspired rule-based matching to find: double negatives, homophone errors (they're + noun), subject-verb disagreement (he do), and punctuation habits. Also reports punctuation frequency profile. Input: text (required, string), comparison_text (optional, string).",
+        "jsCode": "const text = query.text || '';\nconst comparisonText = query.comparison_text || null;\n\nif (!text || text.trim().length < 20) {\n  return JSON.stringify({ error: 'Text too short (min 20 chars)', confidence: 0 });\n}\n\nfunction detectErrorPatterns(txt) {\n  const errors = [];\n  const negWords = ['don\\'t', 'dont', 'cannot', 'can\\'t', 'cant', 'never', 'not'];\n  const negFollow = ['no', 'nothing', 'none', 'never'];\n  for (const neg1 of negWords) {\n    for (const neg2 of negFollow) {\n      // Strip the apostrophe from neg1 to keep the regex simple and safe\n      const escNeg1 = neg1.replace(/'/g, '');\n      const pattern = new RegExp(escNeg1 + '\\\\s+(?:\\\\w+\\\\s+){0,3}' + neg2, 'gi');\n      const matches = txt.match(pattern);\n      if (matches) {\n        errors.push({ type: 'DOUBLE_NEGATIVE', instances: matches, count: matches.length });\n      }\n    }\n  }\n\n  const homophonePattern = /they'?re\\s+[a-z]+ing/gi;\n  const homophoneMatches = txt.match(homophonePattern);\n  if (homophoneMatches) {\n    errors.push({ type: 'HOMOPHONE_ERROR', instances: homophoneMatches, count: homophoneMatches.length });\n  }\n\n  const svPattern = /\\b(he|she|it)\\s+do\\b/gi;\n  const svMatches = txt.match(svPattern);\n  if (svMatches) {\n    errors.push({ type: 'SUBJECT_VERB_ERROR', instances: svMatches, count: svMatches.length });\n  }\n\n  return errors;\n}\n\nfunction analyzePunctuation(txt) {\n  return {\n    commas: (txt.match(/,/g) || []).length,\n    periods: (txt.match(/\\./g) || []).length,\n    semicolons: (txt.match(/;/g) || []).length,\n    colons: (txt.match(/:/g) || []).length,\n    exclamation: (txt.match(/!/g) || []).length,\n    question: (txt.match(/\\?/g) || []).length,\n    dashes: (txt.match(/[\\u2013\\u2014-]/g) || []).length,\n    ellipsis: (txt.match(/\\.\\.\\./g) || []).length,\n    per_1000_chars: Math.round(((txt.match(/[^\\w\\s]/g) || []).length / txt.length * 1000) * 10) / 10\n  };\n}\n\nconst errorPatterns = detectErrorPatterns(text);\nconst punctProfile = analyzePunctuation(text);\nconst totalErrors = errorPatterns.reduce((s, e) => s + e.count, 0);\n\nconst result = {\n  error_patterns: errorPatterns,\n  total_errors_detected: totalErrors,\n  punctuation_profile: punctProfile,\n  text_length: text.length,\n  error_rate_per_1000: Math.round(totalErrors / text.length * 1000 * 100) / 100\n};\n\nif (comparisonText && comparisonText.trim().length >= 20) {\n  const compErrors = detectErrorPatterns(comparisonText);\n  const compPunct = analyzePunctuation(comparisonText);\n  const compTotal = compErrors.reduce((s, e) => s + e.count, 0);\n\n  const errorTypesA = new Set(errorPatterns.map(e => e.type));\n  const errorTypesB = new Set(compErrors.map(e => e.type));\n  const sharedErrors = [...errorTypesA].filter(t => errorTypesB.has(t));\n\n  const punctComparison = {};\n  for (const key of Object.keys(punctProfile)) {\n    if (key === 'per_1000_chars') continue;\n    punctComparison[key] = {\n      text_a: punctProfile[key],\n      text_b: compPunct[key],\n      similar: Math.abs(punctProfile[key] - compPunct[key]) <= Math.max(punctProfile[key], compPunct[key]) * 0.3\n    };\n  }\n\n  result.comparison = {\n    error_similarity: {\n      shared_error_types: sharedErrors,\n      text_a_error_rate: result.error_rate_per_1000,\n      text_b_error_rate: Math.round(compTotal / comparisonText.length * 1000 * 100) / 100\n    },\n    punctuation_comparison: punctComparison\n  };\n}\n\nreturn JSON.stringify(result);",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\",\n      \"description\": \"The text to analyze for error patterns and punctuation habits (verbatim, ≥20 chars).\"\n    },\n    \"comparison_text\": {\n      \"type\": \"string\",\n      \"description\": \"Optional second text to compare error/punctuation patterns against.\"\n    }\n  },\n  \"required\": [\n    \"text\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        220
+      ],
+      "id": "b0a7db71-3146-4889-9ab5-d35d2efe2941",
+      "name": "error_pattern_analysis"
+    },
+    {
+      "parameters": {
+        "description": "Analyze frequent word patterns with emphasis on function word categories. Profiles articles, prepositions, pronouns, conjunctions, and auxiliary verbs - these are the strongest style indicators because they are used unconsciously and are topic-independent. Returns per-category ratios and comparison. Input: text (required), comparison_text (optional).",
+        "jsCode": "const text = query.text || '';\nconst comparisonText = query.comparison_text || null;\n\nif (!text || text.trim().length < 20) {\n  return JSON.stringify({ error: 'Text too short (min 20 chars)', confidence: 0 });\n}\n\nconst functionWordCategories = {\n  articles: ['the', 'a', 'an'],\n  prepositions: ['of', 'in', 'to', 'for', 'with', 'on', 'at', 'from', 'by', 'about', 'as', 'into', 'through', 'after', 'over', 'between', 'out', 'against', 'during', 'without', 'before', 'under', 'around', 'among'],\n  pronouns: ['i', 'me', 'my', 'mine', 'myself', 'you', 'your', 'yours', 'yourself', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'we', 'us', 'our', 'ours', 'ourselves', 'they', 'them', 'their', 'theirs', 'themselves', 'this', 'that', 'these', 'those', 'who', 'whom', 'whose', 'which', 'what'],\n  conjunctions: ['and', 'but', 'or', 'nor', 'for', 'yet', 'so', 'although', 'because', 'since', 'unless', 'while', 'whereas', 'whether', 'if', 'then', 'than', 'that', 'when', 'where'],\n  auxiliary_verbs: ['is', 'am', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'will', 'would', 'shall', 'should', 'may', 'might', 'must', 'can', 'could']\n};\n\nfunction analyzeWords(txt) {\n  const tokens = txt.toLowerCase().match(/\\b[a-z']+\\b/g) || [];\n  const wordCounts = {};\n  for (const t of tokens) wordCounts[t] = (wordCounts[t] || 0) + 1;\n  const totalWords = tokens.length;\n  const functionCounts = {};\n  for (const [cat, words] of Object.entries(functionWordCategories)) {\n    functionCounts[cat] = words.reduce((sum, w) => sum + (wordCounts[w] || 0), 0);\n  }\n  const functionTotal = Object.values(functionCounts).reduce((s, v) => s + v, 0);\n  const top20 = Object.entries(wordCounts).sort((a, b) => b[1] - a[1]).slice(0, 20);\n  const safeDiv = totalWords > 0 ? totalWords : 1;\n  return {\n    total_words: totalWords,\n    unique_words: Object.keys(wordCounts).length,\n    top_words: Object.fromEntries(top20),\n    function_word_counts: functionCounts,\n    function_word_ratios: Object.fromEntries(Object.entries(functionCounts).map(([k, v]) => [k, Math.round(v / safeDiv * 10000) / 10000])),\n    function_word_total_ratio: Math.round(functionTotal / safeDiv * 10000) / 10000\n  };\n}\n\nconst analysis = analyzeWords(text);\n\nconst result = {\n  text_length: text.length,\n  frequent_words: analysis.top_words,\n  function_word_distribution: analysis.function_word_ratios,\n  function_word_total_ratio: analysis.function_word_total_ratio,\n  total_words: analysis.total_words,\n  unique_words: analysis.unique_words\n};\n\nif (comparisonText && comparisonText.trim().length >= 20) {\n  const compAnalysis = analyzeWords(comparisonText);\n  const allCats = Object.keys(functionWordCategories);\n  const safeA = analysis.total_words > 0 ? analysis.total_words : 1;\n  const safeB = compAnalysis.total_words > 0 ? compAnalysis.total_words : 1;\n  const vecA = allCats.map(c => (analysis.function_word_counts[c] || 0) / safeA);\n  const vecB = allCats.map(c => (compAnalysis.function_word_counts[c] || 0) / safeB);\n  let dot = 0, normA = 0, normB = 0;\n  for (let i = 0; i < vecA.length; i++) {\n    dot += vecA[i] * vecB[i];\n    normA += vecA[i] * vecA[i];\n    normB += vecB[i] * vecB[i];\n  }\n  const cosineSim = normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;\n  const functionWordComparison = {};\n  for (const cat of allCats) {\n    functionWordComparison[cat] = {\n      text_a_ratio: analysis.function_word_ratios[cat],\n      text_b_ratio: compAnalysis.function_word_ratios[cat],\n      difference: Math.round(Math.abs(analysis.function_word_ratios[cat] - compAnalysis.function_word_ratios[cat]) * 10000) / 10000\n    };\n  }\n  result.comparison = {\n    function_word_cosine_similarity: Math.round(cosineSim * 10000) / 10000,\n    function_word_comparison: functionWordComparison\n  };\n}\n\nreturn JSON.stringify(result);",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\",\n      \"description\": \"The text to analyze for frequent-word patterns (verbatim, ≥20 chars).\"\n    },\n    \"comparison_text\": {\n      \"type\": \"string\",\n      \"description\": \"Optional second text for side-by-side function-word comparison.\"\n    }\n  },\n  \"required\": [\n    \"text\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        200,
+        220
+      ],
+      "id": "9aed26c8-fba0-49f1-a933-4fbc142135cf",
+      "name": "frequent_word_analysis"
+    },
+    {
+      "parameters": {
+        "description": "Measure vocabulary richness and lexical diversity using established metrics: TTR (Type-Token Ratio), RTTR (Root TTR), Hapax Legomena Ratio, and Yule's K constant. Lower Yule's K = richer vocabulary. These metrics are strong authorship indicators because vocabulary habits are largely unconscious. Input: text (required), comparison_text (optional).",
+        "jsCode": "const text = query.text || '';\nconst comparisonText = query.comparison_text || null;\n\nif (!text || text.trim().length < 20) {\n  return JSON.stringify({ error: 'Text too short (min 20 chars)', confidence: 0 });\n}\n\nfunction ttr(tokens) { return tokens.length > 0 ? new Set(tokens).size / tokens.length : 0; }\nfunction rttr(tokens) { return tokens.length > 0 ? new Set(tokens).size / Math.sqrt(tokens.length) : 0; }\nfunction hapaxRatio(tokens) {\n  const counts = {};\n  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;\n  const types = Object.keys(counts).length;\n  const hapaxes = Object.values(counts).filter(c => c === 1).length;\n  return types > 0 ? hapaxes / types : 0;\n}\nfunction yulesK(tokens) {\n  const counts = {};\n  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;\n  const freqSpectrum = {};\n  for (const c of Object.values(counts)) freqSpectrum[c] = (freqSpectrum[c] || 0) + 1;\n  const N = tokens.length;\n  if (N === 0) return 0;\n  let s = 0;\n  for (const [i, vI] of Object.entries(freqSpectrum)) s += Math.pow(parseInt(i), 2) * vI;\n  return 10000 * (s - N) / (N * N);\n}\n\nfunction computeAllMetrics(txt) {\n  const tokens = txt.toLowerCase().match(/\\b[a-z']+\\b/g) || [];\n  const N = tokens.length;\n  const V = new Set(tokens).size;\n  const yk = yulesK(tokens);\n  return {\n    tokens_N: N,\n    types_V: V,\n    ttr: Math.round(ttr(tokens) * 10000) / 10000,\n    rttr: Math.round(rttr(tokens) * 10000) / 10000,\n    hapax_ratio: Math.round(hapaxRatio(tokens) * 10000) / 10000,\n    yules_k: Math.round(yk * 100) / 100,\n    yules_k_interpretation: yk < 100 ? 'Rich vocabulary' : yk < 200 ? 'Moderate vocabulary' : 'Limited vocabulary'\n  };\n}\n\nconst metrics = computeAllMetrics(text);\n\nconst result = {\n  text_length: text.length,\n  vocabulary_richness: metrics\n};\n\nif (comparisonText && comparisonText.trim().length >= 20) {\n  const compMetrics = computeAllMetrics(comparisonText);\n  const comparison = {};\n  for (const key of ['ttr', 'rttr', 'hapax_ratio', 'yules_k']) {\n    const diff = Math.abs(metrics[key] - compMetrics[key]);\n    comparison[key] = {\n      text_a: metrics[key],\n      text_b: compMetrics[key],\n      difference: Math.round(diff * 10000) / 10000,\n      interpretation: diff < 0.05 ? 'Very similar' : diff < 0.15 ? 'Somewhat different' : 'Significantly different'\n    };\n  }\n  result.comparison = {\n    text_b_vocabulary_richness: compMetrics,\n    metric_comparison: comparison,\n    overall_vocabulary_similarity: Math.round((1 - Math.abs(metrics.ttr - compMetrics.ttr)) * 10000) / 10000\n  };\n}\n\nreturn JSON.stringify(result);",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"text\": {\n      \"type\": \"string\",\n      \"description\": \"The text to compute vocabulary-richness metrics for (verbatim, ≥20 chars).\"\n    },\n    \"comparison_text\": {\n      \"type\": \"string\",\n      \"description\": \"Optional second text for vocabulary comparison.\"\n    }\n  },\n  \"required\": [\n    \"text\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        400,
+        220
+      ],
+      "id": "fb46471f-c37b-465f-aa2a-6814191b9f31",
+      "name": "vocabulary_richness"
+    },
+    {
+      "parameters": {
+        "description": "Multi-order character n-gram analysis across orders 2 through 5. Unlike verify_authorship (which uses a single order), this provides a comprehensive profile across all orders with weighted overall similarity. Weights: 2-gram=0.2, 3-gram=0.3, 4-gram=0.3, 5-gram=0.2. Use for detailed n-gram profiling when you need more than a single-order comparison. Input: known_text (required), questioned_text (required).",
+        "jsCode": "const knownText = query.known_text || '';\nconst questionedText = query.questioned_text || '';\n\nif (!knownText || knownText.trim().length < 20 || !questionedText || questionedText.trim().length < 20) {\n  return JSON.stringify({ error: 'Both texts must be at least 20 characters', confidence: 0 });\n}\n\nfunction tokenizeCharNgrams(text, n) {\n  const normalized = text.replace(/\\s+/g, ' ');\n  if (n <= 0 || normalized.length < n) return [];\n  const ngrams = [];\n  for (let i = 0; i <= normalized.length - n; i++) ngrams.push(normalized.substring(i, i + n));\n  return ngrams;\n}\n\nfunction cosineSim(a, b) {\n  let dot = 0, normA = 0, normB = 0;\n  for (let i = 0; i < Math.min(a.length, b.length); i++) {\n    dot += a[i] * b[i]; normA += a[i] * a[i]; normB += b[i] * b[i];\n  }\n  return normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;\n}\n\nfunction jaccardSim(keysA, keysB) {\n  const setA = new Set(keysA);\n  const setB = new Set(keysB);\n  let intersection = 0;\n  for (const k of setA) if (setB.has(k)) intersection++;\n  const union = new Set([...setA, ...setB]).size;\n  return union ? intersection / union : 0;\n}\n\nconst orders = [2, 3, 4, 5];\nconst weights = { 2: 0.2, 3: 0.3, 4: 0.3, 5: 0.2 };\nconst similarities = {};\nlet overallCosine = 0;\n\nfor (const order of orders) {\n  const knownTokens = tokenizeCharNgrams(knownText, order);\n  const questionedTokens = tokenizeCharNgrams(questionedText, order);\n  const knownCounts = {};\n  const questionedCounts = {};\n  for (const t of knownTokens) knownCounts[t] = (knownCounts[t] || 0) + 1;\n  for (const t of questionedTokens) questionedCounts[t] = (questionedCounts[t] || 0) + 1;\n  const knownTop = Object.entries(knownCounts).sort((a, b) => b[1] - a[1]).slice(0, 300);\n  const questionedTop = Object.entries(questionedCounts).sort((a, b) => b[1] - a[1]).slice(0, 300);\n  const allKeys = [...new Set([...knownTop.map(e => e[0]), ...questionedTop.map(e => e[0])])].sort();\n  const knownTotal = knownTop.reduce((s, e) => s + e[1], 0);\n  const questionedTotal = questionedTop.reduce((s, e) => s + e[1], 0);\n  const vecKnown = allKeys.map(k => (knownCounts[k] || 0) / knownTotal);\n  const vecQuest = allKeys.map(k => (questionedCounts[k] || 0) / questionedTotal);\n  const cos = cosineSim(vecKnown, vecQuest);\n  const jac = jaccardSim(knownTop.map(e => e[0]), questionedTop.map(e => e[0]));\n  similarities[`${order}-gram`] = { cosine_similarity: Math.round(cos * 10000) / 10000, jaccard_similarity: Math.round(jac * 10000) / 10000 };\n  overallCosine += cos * (weights[order] || 0.25);\n}\n\nreturn JSON.stringify({\n  multi_order_similarities: similarities,\n  overall_weighted_similarity: Math.round(overallCosine * 10000) / 10000,\n  interpretation: overallCosine > 0.85 ? 'STRONG MATCH across all n-gram orders' : overallCosine > 0.65 ? 'MODERATE MATCH - some stylistic similarity' : overallCosine > 0.4 ? 'WEAK MATCH - limited similarity' : 'LOW MATCH - likely different authors',\n  orders_used: orders,\n  weights_used: weights\n});",
+        "specifyInputSchema": true,
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"known_text\": {\n      \"type\": \"string\",\n      \"description\": \"The known author's text passage (verbatim, ≥20 chars).\"\n    },\n    \"questioned_text\": {\n      \"type\": \"string\",\n      \"description\": \"The questioned text passage to compare (verbatim, ≥20 chars).\"\n    }\n  },\n  \"required\": [\n    \"known_text\",\n    \"questioned_text\"\n  ]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        600,
+        220
+      ],
+      "id": "740e8a05-a466-4bb5-8cf4-820232c620ae",
+      "name": "multi_order_ngram_analysis"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eval Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "verify_authorship": {
+      "ai_tool": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "compare_stylistic_profiles": {
+      "ai_tool": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "error_pattern_analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "frequent_word_analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "vocabulary_richness": {
+      "ai_tool": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "multi_order_ngram_analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "Eval Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ea955bc6-d911-44f3-a0bb-d3db65758fc2",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "4a2d49fc-b00a-410e-9e27-b7717c79b951",
+  "tags": []
+}
